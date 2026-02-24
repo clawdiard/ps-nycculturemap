@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NYC Culture Map — Interactive Guide to New York's Cultural Institutions</title>
+<meta name="description" content="Explore New York City's major cultural institutions, their board connections, upcoming events, and neighborhood cultural density.">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0a0f;--surface:#12121a;--surface2:#1a1a26;--border:#2a2a3a;
+  --text:#e8e8f0;--text2:#9898a8;--accent:#6b8aff;--accent2:#8b6bff;
+  --gold:#d4a853;--green:#4ade80;--red:#f87171;
+}
+html{font-size:16px}
+body{font-family:'SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);overflow:hidden;height:100vh;width:100vw}
+#app{display:grid;grid-template-columns:380px 1fr;grid-template-rows:64px 1fr;height:100vh;width:100vw}
+header{grid-column:1/-1;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 24px;z-index:1000}
+header h1{font-size:1.25rem;font-weight:600;letter-spacing:-.02em}
+header h1 span{color:var(--gold)}
+.header-stats{display:flex;gap:24px}
+.header-stat{text-align:center}
+.header-stat .val{font-size:1.1rem;font-weight:700;color:var(--accent)}
+.header-stat .lbl{font-size:.65rem;text-transform:uppercase;letter-spacing:.08em;color:var(--text2)}
+#sidebar{background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;padding:16px}
+#sidebar::-webkit-scrollbar{width:4px}
+#sidebar::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+#map{position:relative}
+.search-box{position:relative;margin-bottom:12px}
+.search-box input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px 10px 36px;color:var(--text);font-size:.875rem;outline:none;transition:border-color .2s}
+.search-box input:focus{border-color:var(--accent)}
+.search-box svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text2)}
+.filter-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+.filter-btn{padding:5px 12px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text2);font-size:.7rem;cursor:pointer;transition:all .2s;text-transform:uppercase;letter-spacing:.04em}
+.filter-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.filter-btn:hover{border-color:var(--accent)}
+.inst-card{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px;cursor:pointer;transition:all .2s}
+.inst-card:hover,.inst-card.active{border-color:var(--accent);transform:translateX(3px)}
+.inst-card h3{font-size:.9rem;font-weight:600;margin-bottom:4px}
+.inst-card .cat{font-size:.65rem;text-transform:uppercase;letter-spacing:.06em;color:var(--gold);margin-bottom:6px}
+.inst-card .meta{font-size:.75rem;color:var(--text2);line-height:1.5}
+.inst-card .connections{display:flex;gap:4px;flex-wrap:wrap;margin-top:8px}
+.conn-tag{font-size:.6rem;padding:2px 8px;border-radius:10px;background:rgba(107,138,255,.15);color:var(--accent);border:1px solid rgba(107,138,255,.2)}
+.section-title{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:var(--text2);margin:16px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+/* Leaflet overrides */
+.leaflet-container{background:var(--bg)!important}
+.leaflet-tile-pane{filter:brightness(.6) contrast(1.2) saturate(.3) hue-rotate(180deg)}
+.leaflet-control-zoom a{background:var(--surface)!important;color:var(--text)!important;border-color:var(--border)!important}
+.leaflet-popup-content-wrapper{background:var(--surface)!important;color:var(--text)!important;border-radius:10px!important;border:1px solid var(--border)!important;box-shadow:0 8px 32px rgba(0,0,0,.5)!important}
+.leaflet-popup-tip{background:var(--surface)!important}
+.leaflet-popup-close-button{color:var(--text2)!important}
+.popup-title{font-size:1rem;font-weight:700;margin-bottom:2px}
+.popup-cat{font-size:.7rem;color:var(--gold);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+.popup-detail{font-size:.8rem;color:var(--text2);line-height:1.6}
+.popup-detail strong{color:var(--text)}
+.popup-events{margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
+.popup-events h4{font-size:.7rem;text-transform:uppercase;color:var(--accent);margin-bottom:4px;letter-spacing:.06em}
+.popup-event{font-size:.75rem;color:var(--text2);padding:2px 0}
+.custom-marker{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;border:2px solid;box-shadow:0 2px 8px rgba(0,0,0,.4);transition:transform .2s}
+.custom-marker:hover{transform:scale(1.2)}
+.legend{position:absolute;bottom:24px;right:24px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;z-index:1000;min-width:180px}
+.legend h4{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--text2);margin-bottom:8px}
+.legend-item{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:.75rem;color:var(--text2)}
+.legend-dot{width:12px;height:12px;border-radius:50%;border:2px solid}
+.board-panel{display:none;margin-top:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px}
+.board-panel.show{display:block}
+.board-panel h4{font-size:.75rem;color:var(--accent);margin-bottom:8px}
+.board-link{display:flex;align-items:center;gap:6px;padding:4px 0;font-size:.75rem;color:var(--text2);border-bottom:1px solid rgba(255,255,255,.04)}
+.board-link .dot{width:6px;height:6px;border-radius:50%;background:var(--gold)}
+.events-upcoming{margin-top:12px}
+.event-item{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:6px}
+.event-item .date{font-size:.65rem;color:var(--accent);text-transform:uppercase;letter-spacing:.06em}
+.event-item .title{font-size:.8rem;font-weight:600;margin:2px 0}
+.event-item .venue{font-size:.7rem;color:var(--text2)}
+@media(max-width:900px){
+  #app{grid-template-columns:1fr;grid-template-rows:56px 50vh 1fr}
+  #sidebar{border-right:none;border-top:1px solid var(--border)}
+}
+</style>
+</head>
+<body>
+<div id="app">
+<header>
+  <h1>NYC <span>Culture</span> Map</h1>
+  <div class="header-stats">
+    <div class="header-stat"><div class="val" id="stat-institutions">0</div><div class="lbl">Institutions</div></div>
+    <div class="header-stat"><div class="val" id="stat-events">0</div><div class="lbl">Events</div></div>
+    <div class="header-stat"><div class="val" id="stat-connections">0</div><div class="lbl">Board Links</div></div>
+  </div>
+</header>
+<div id="sidebar">
+  <div class="search-box">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+    <input type="text" id="search" placeholder="Search institutions, events...">
+  </div>
+  <div class="filter-row" id="filters"></div>
+  <div class="section-title">Institutions</div>
+  <div id="inst-list"></div>
+  <div class="section-title">Upcoming Events</div>
+  <div id="events-list" class="events-upcoming"></div>
+</div>
+<div id="map">
+  <div class="legend">
+    <h4>Categories</h4>
+    <div id="legend-items"></div>
+  </div>
+</div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const CATEGORIES = {
+  'Performing Arts': { color: '#d4a853', icon: '🎭' },
+  'Museum': { color: '#6b8aff', icon: '🏛️' },
+  'Music': { color: '#8b6bff', icon: '🎵' },
+  'Library': { color: '#4ade80', icon: '📚' },
+  'Film & Media': { color: '#f87171', icon: '🎬' },
+  'Visual Arts': { color: '#fb923c', icon: '🎨' },
+  'Botanical': { color: '#34d399', icon: '🌿' },
+  'Historic': { color: '#a78bfa', icon: '🏰' },
+  'Education': { color: '#38bdf8', icon: '🎓' }
+};
+
+const INSTITUTIONS = [
+  { name:"Lincoln Center for the Performing Arts", cat:"Performing Arts", lat:40.7725, lng:-73.9835, hood:"Upper West Side",
+    founded:1962, desc:"World's leading performing arts complex housing 11 resident organizations.",
+    board:["Metropolitan Opera","New York Philharmonic","NYC Ballet","Juilliard","Jazz at Lincoln Center","Chamber Music Society","Lincoln Center Theater","Film at Lincoln Center","School of American Ballet","LC for the Performing Arts"],
+    events:[{d:"Feb 26",t:"NYPO: Beethoven's 9th"},{d:"Feb 28",t:"Met Opera: La Bohème"},{d:"Mar 1",t:"NYCB: Winter Season Gala"}]},
+  { name:"The Metropolitan Museum of Art", cat:"Museum", lat:40.7794, lng:-73.9632, hood:"Upper East Side",
+    founded:1870, desc:"Largest art museum in the Americas with 2 million+ works spanning 5,000 years.",
+    board:["NYU","NewYork-Presbyterian","Brookfield Asset Mgmt"],
+    events:[{d:"Now",t:"Sleeping Beauties: Reawakening Fashion"},{d:"Mar 4",t:"Harlem Renaissance Exhibition"}]},
+  { name:"Carnegie Hall", cat:"Music", lat:40.7651, lng:-73.9799, hood:"Midtown",
+    founded:1891, desc:"One of the most prestigious concert venues in the world.",
+    board:["Juilliard","New York Philharmonic","Weill Cornell"],
+    events:[{d:"Feb 27",t:"Vienna Philharmonic"},{d:"Mar 2",t:"Yo-Yo Ma Recital"}]},
+  { name:"Museum of Modern Art (MoMA)", cat:"Museum", lat:40.7614, lng:-73.9776, hood:"Midtown",
+    founded:1929, desc:"World's most influential museum of modern & contemporary art.",
+    board:["MoMA PS1","Citigroup","Bloomberg LP"],
+    events:[{d:"Now",t:"Joan Jonas Retrospective"},{d:"Mar 5",t:"New Photography 2026"}]},
+  { name:"New York Public Library", cat:"Library", lat:40.7532, lng:-73.9822, hood:"Midtown",
+    founded:1895, desc:"Iconic research library with 55M+ items across 92 locations.",
+    board:["Columbia University","JPMorgan Chase","Ford Foundation"],
+    events:[{d:"Feb 28",t:"Live from NYPL: Author Series"},{d:"Mar 3",t:"Digital Futures Conference"}]},
+  { name:"Jazz at Lincoln Center", cat:"Music", lat:40.7688, lng:-73.9830, hood:"Columbus Circle",
+    founded:1987, desc:"World's premier jazz institution at the Frederick P. Rose Hall.",
+    board:["Lincoln Center","Wynton Marsalis Foundation"],
+    events:[{d:"Feb 25",t:"Wynton Marsalis Quintet"},{d:"Mar 1",t:"Big Band Saturdays"}]},
+  { name:"The Frick Collection", cat:"Museum", lat:40.7710, lng:-73.9673, hood:"Upper East Side",
+    founded:1935, desc:"Masterpieces of Western art in Henry Clay Frick's former residence.",
+    board:["Morgan Library","Metropolitan Museum"],
+    events:[{d:"Mar 1",t:"Newly Reopened Galleries Tour"},{d:"Mar 6",t:"Concert Series: Chamber Music"}]},
+  { name:"Whitney Museum of American Art", cat:"Visual Arts", lat:40.7396, lng:-74.0089, hood:"Meatpacking District",
+    founded:1931, desc:"Premier museum of 20th and 21st century American art.",
+    board:["Museum of the City of NY","NYU"],
+    events:[{d:"Now",t:"2026 Biennial"},{d:"Mar 8",t:"Performance: New Works"}]},
+  { name:"Guggenheim Museum", cat:"Museum", lat:40.7830, lng:-73.9590, hood:"Upper East Side",
+    founded:1939, desc:"Frank Lloyd Wright's iconic spiral showcasing modern & contemporary art.",
+    board:["Venice Biennale","Tate Modern"],
+    events:[{d:"Now",t:"Going Dark: The Contemporary Figure"},{d:"Mar 2",t:"Works & Process: New Commissions"}]},
+  { name:"American Museum of Natural History", cat:"Museum", lat:40.7813, lng:-73.9740, hood:"Upper West Side",
+    founded:1869, desc:"One of the world's largest natural history museums with 33M+ specimens.",
+    board:["Columbia University","Rockefeller Foundation"],
+    events:[{d:"Now",t:"Gilder Center Grand Opening Year"},{d:"Mar 5",t:"SciCafe: Ocean Futures"}]},
+  { name:"Brooklyn Academy of Music (BAM)", cat:"Performing Arts", lat:40.6862, lng:-73.9782, hood:"Fort Greene",
+    founded:1861, desc:"America's oldest performing arts center — avant-garde theater, dance, music, film.",
+    board:["Brooklyn Museum","Mark Morris Dance"],
+    events:[{d:"Feb 28",t:"Next Wave Winter"},{d:"Mar 3",t:"BAMcinématek: New Directors"}]},
+  { name:"The Morgan Library & Museum", cat:"Museum", lat:40.7491, lng:-73.9814, hood:"Murray Hill",
+    founded:1906, desc:"Rare books, manuscripts, and art in J.P. Morgan's personal library.",
+    board:["Frick Collection","NYPL"],
+    events:[{d:"Now",t:"Medieval Manuscripts Illuminated"},{d:"Mar 4",t:"Music at the Morgan"}]},
+  { name:"Film at Lincoln Center", cat:"Film & Media", lat:40.7736, lng:-73.9845, hood:"Upper West Side",
+    founded:1969, desc:"Year-round film programming including the New York Film Festival.",
+    board:["Lincoln Center","Tribeca Film Institute"],
+    events:[{d:"Mar 6",t:"New Directors/New Films"},{d:"Apr 1",t:"Art of the Real"}]},
+  { name:"New York Botanical Garden", cat:"Botanical", lat:40.8629, lng:-73.8782, hood:"Bronx",
+    founded:1891, desc:"250-acre living museum & botanical research institution.",
+    board:["Bronx Zoo","Columbia University"],
+    events:[{d:"Mar 1",t:"Orchid Show 2026"},{d:"Mar 15",t:"Spring Garden Tour"}]},
+  { name:"Brooklyn Museum", cat:"Museum", lat:40.6712, lng:-73.9637, hood:"Prospect Heights",
+    founded:1895, desc:"Second-largest art museum in NYC with 1.5M+ works.",
+    board:["BAM","Prospect Park Alliance"],
+    events:[{d:"Now",t:"Virgil Abloh: Figures of Speech"},{d:"Mar 7",t:"First Saturday: Free Admission"}]},
+  { name:"The Shed", cat:"Performing Arts", lat:40.7536, lng:-74.0022, hood:"Hudson Yards",
+    founded:2019, desc:"Newest major cultural venue — flexible space for commissions across all disciplines.",
+    board:["Bloomberg Philanthropies","Related Companies"],
+    events:[{d:"Mar 3",t:"Open Call: Emerging Artists"},{d:"Mar 10",t:"Soundtrack of America"}]},
+  { name:"Juilliard School", cat:"Education", lat:40.7739, lng:-73.9830, hood:"Upper West Side",
+    founded:1905, desc:"World-renowned conservatory for music, dance, and drama.",
+    board:["Lincoln Center","Carnegie Hall"],
+    events:[{d:"Feb 27",t:"Student Recital Series"},{d:"Mar 5",t:"Juilliard Orchestra"}]},
+  { name:"Museum of the City of New York", cat:"Museum", lat:40.7925, lng:-73.9519, hood:"East Harlem",
+    founded:1923, desc:"NYC's history museum — from Dutch colony to global metropolis.",
+    board:["NYC Parks","Whitney Museum"],
+    events:[{d:"Now",t:"City of Workers, City of Struggle"},{d:"Mar 2",t:"Future City Lab"}]},
+  { name:"New-York Historical Society", cat:"Historic", lat:40.7794, lng:-73.9741, hood:"Upper West Side",
+    founded:1804, desc:"NYC's oldest museum — American history, art & culture since 1804.",
+    board:["NYPL","Central Park Conservancy"],
+    events:[{d:"Now",t:"The Colosseum: Power & Spectacle"},{d:"Mar 8",t:"History Talks: NYC in the 1960s"}]},
+  { name:"El Museo del Barrio", cat:"Museum", lat:40.7936, lng:-73.9510, hood:"East Harlem",
+    founded:1969, desc:"Leading Latino cultural institution — art from the Caribbean & Latin America.",
+    board:["Museum Mile Consortium","NYC Cultural Affairs"],
+    events:[{d:"Mar 1",t:"Día de los Muertos Exhibition"},{d:"Mar 14",t:"S Files Biennial"}]},
+  { name:"Intrepid Sea, Air & Space Museum", cat:"Historic", lat:40.7645, lng:-73.9997, hood:"Hell's Kitchen",
+    founded:1982, desc:"Aircraft carrier USS Intrepid — military & maritime history.",
+    board:["Smithsonian","US Navy Memorial"],
+    events:[{d:"Mar 1",t:"Space Shuttle Pavilion Night Tour"},{d:"Mar 8",t:"Fleet Week Preview"}]},
+  { name:"The Cloisters", cat:"Museum", lat:40.8649, lng:-73.9318, hood:"Fort Tryon Park",
+    founded:1938, desc:"Met branch dedicated to medieval European art & architecture.",
+    board:["Metropolitan Museum of Art"],
+    events:[{d:"Mar 2",t:"Medieval Garden Opening"},{d:"Mar 9",t:"Unicorn Tapestries Talk"}]},
+  { name:"Cooper Hewitt Smithsonian Design Museum", cat:"Visual Arts", lat:40.7844, lng:-73.9578, hood:"Upper East Side",
+    founded:1897, desc:"Only museum in the US devoted exclusively to historic & contemporary design.",
+    board:["Smithsonian Institution","Parsons School of Design"],
+    events:[{d:"Now",t:"Nature by Design"},{d:"Mar 5",t:"Design Triennial 2026"}]},
+  { name:"Asia Society and Museum", cat:"Museum", lat:40.7689, lng:-73.9647, hood:"Upper East Side",
+    founded:1956, desc:"Leading institution dedicated to fostering understanding of Asia.",
+    board:["Council on Foreign Relations","Columbia University"],
+    events:[{d:"Mar 1",t:"Contemporary Chinese Art"},{d:"Mar 10",t:"Policy Forum: Asia 2030"}]},
+  { name:"New York City Center", cat:"Performing Arts", lat:40.7620, lng:-73.9832, hood:"Midtown",
+    founded:1943, desc:"Historic performing arts venue — dance capital of the world.",
+    board:["Alvin Ailey","Fall for Dance"],
+    events:[{d:"Mar 5",t:"Alvin Ailey Spring Season"},{d:"Mar 12",t:"Encores! Musical Revival"}]},
+  { name:"Tribeca Film Festival Center", cat:"Film & Media", lat:40.7163, lng:-74.0086, hood:"Tribeca",
+    founded:2002, desc:"Year-round home of the Tribeca Film Festival programming.",
+    board:["Film at Lincoln Center","Sundance Institute"],
+    events:[{d:"Jun 4",t:"Tribeca Festival 2026"},{d:"Mar 8",t:"Tribeca Talks: Documentary"}]}
+];
+
+// Count board connections
+const boardLinks = new Set();
+INSTITUTIONS.forEach(i => (i.board||[]).forEach(b => {
+  INSTITUTIONS.forEach(j => {
+    if(i!==j && (j.board||[]).some(bb=>bb===b || j.name.includes(b) || b.includes(j.name.split('(')[0].trim()))){
+      boardLinks.add([i.name,j.name].sort().join('|||'));
+    }
+  });
+}));
+
+const totalEvents = INSTITUTIONS.reduce((s,i)=>s+(i.events||[]).length,0);
+document.getElementById('stat-institutions').textContent = INSTITUTIONS.length;
+document.getElementById('stat-events').textContent = totalEvents;
+document.getElementById('stat-connections').textContent = boardLinks.size;
+
+// Legend
+const legendEl = document.getElementById('legend-items');
+Object.entries(CATEGORIES).forEach(([cat,{color,icon}])=>{
+  legendEl.innerHTML += `<div class="legend-item"><div class="legend-dot" style="background:${color}33;border-color:${color}"></div>${icon} ${cat}</div>`;
+});
+
+// Filters
+const filtersEl = document.getElementById('filters');
+let activeFilter = 'All';
+filtersEl.innerHTML = `<button class="filter-btn active" data-cat="All">All</button>` +
+  Object.keys(CATEGORIES).map(c=>`<button class="filter-btn" data-cat="${c}">${c}</button>`).join('');
+filtersEl.addEventListener('click',e=>{
+  if(!e.target.classList.contains('filter-btn'))return;
+  activeFilter=e.target.dataset.cat;
+  filtersEl.querySelectorAll('.filter-btn').forEach(b=>b.classList.toggle('active',b.dataset.cat===activeFilter));
+  render();
+});
+
+// Map
+const map = L.map('map',{zoomControl:true}).setView([40.7580,-73.9755],12);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+  attribution:'© CartoDB © OSM',maxZoom:19
+}).addTo(map);
+
+const markers = {};
+INSTITUTIONS.forEach(inst=>{
+  const {color,icon} = CATEGORIES[inst.cat]||{color:'#888',icon:'📍'};
+  const mk = L.marker([inst.lat,inst.lng],{
+    icon:L.divIcon({
+      className:'',
+      html:`<div class="custom-marker" style="background:${color}22;border-color:${color}">${icon}</div>`,
+      iconSize:[32,32],iconAnchor:[16,16]
+    })
+  }).addTo(map);
+  mk.bindPopup(()=>{
+    let evHtml = (inst.events||[]).map(e=>`<div class="popup-event">📅 <strong>${e.d}</strong> — ${e.t}</div>`).join('');
+    return `<div><div class="popup-title">${inst.name}</div><div class="popup-cat">${inst.cat} · ${inst.hood}</div><div class="popup-detail">${inst.desc}<br><strong>Founded:</strong> ${inst.founded}</div>${evHtml?`<div class="popup-events"><h4>Upcoming</h4>${evHtml}</div>`:''}</div>`;
+  },{maxWidth:320});
+  markers[inst.name]=mk;
+});
+
+// Sidebar
+function render(){
+  const q = document.getElementById('search').value.toLowerCase();
+  const filtered = INSTITUTIONS.filter(i=>{
+    if(activeFilter!=='All' && i.cat!==activeFilter) return false;
+    if(q && !i.name.toLowerCase().includes(q) && !i.hood.toLowerCase().includes(q) && !(i.events||[]).some(e=>e.t.toLowerCase().includes(q))) return false;
+    return true;
+  });
+  const listEl = document.getElementById('inst-list');
+  listEl.innerHTML = filtered.map(i=>{
+    const {color} = CATEGORIES[i.cat]||{color:'#888'};
+    const conns = (i.board||[]).slice(0,3).map(b=>`<span class="conn-tag">${b}</span>`).join('');
+    return `<div class="inst-card" data-name="${i.name}">
+      <h3>${i.name}</h3>
+      <div class="cat" style="color:${color}">${i.cat} · ${i.hood}</div>
+      <div class="meta">Founded ${i.founded} · ${(i.events||[]).length} upcoming events</div>
+      ${conns?`<div class="connections">${conns}</div>`:''}
+    </div>`;
+  }).join('');
+  // events
+  const allEvents = [];
+  filtered.forEach(i=>(i.events||[]).forEach(e=>allEvents.push({...e,venue:i.name,cat:i.cat})));
+  document.getElementById('events-list').innerHTML = allEvents.slice(0,8).map(e=>{
+    const {color}=CATEGORIES[e.cat]||{color:'#888'};
+    return `<div class="event-item"><div class="date">${e.d}</div><div class="title">${e.t}</div><div class="venue" style="color:${color}">${e.venue}</div></div>`;
+  }).join('');
+  // marker visibility
+  INSTITUTIONS.forEach(i=>{
+    const show = filtered.includes(i);
+    if(show && !map.hasLayer(markers[i.name])) markers[i.name].addTo(map);
+    if(!show && map.hasLayer(markers[i.name])) map.removeLayer(markers[i.name]);
+  });
+}
+
+document.getElementById('search').addEventListener('input',render);
+document.getElementById('inst-list').addEventListener('click',e=>{
+  const card = e.target.closest('.inst-card');
+  if(!card)return;
+  const inst = INSTITUTIONS.find(i=>i.name===card.dataset.name);
+  if(inst){
+    map.flyTo([inst.lat,inst.lng],15,{duration:1});
+    markers[inst.name].openPopup();
+  }
+});
+render();
+</script>
+</body>
+</html>
