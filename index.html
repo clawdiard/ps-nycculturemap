@@ -74,6 +74,18 @@ header h1 span{color:var(--gold)}
 .event-item .date{font-size:.65rem;color:var(--accent);text-transform:uppercase;letter-spacing:.06em}
 .event-item .title{font-size:.8rem;font-weight:600;margin:2px 0}
 .event-item .venue{font-size:.7rem;color:var(--text2)}
+/* Heatmap Controls */
+.heatmap-controls{position:absolute;top:12px;left:12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;z-index:1001;min-width:200px}
+.heatmap-controls h4{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--text2);margin-bottom:8px}
+.heatmap-controls label{display:flex;align-items:center;gap:8px;font-size:.75rem;color:var(--text2);padding:4px 0;cursor:pointer;transition:color .2s}
+.heatmap-controls label:hover{color:var(--text)}
+.heatmap-controls input[type="radio"]{accent-color:var(--accent);width:14px;height:14px}
+.heatmap-controls .heat-off{margin-top:6px;padding-top:6px;border-top:1px solid var(--border)}
+.heat-legend{position:absolute;top:12px;right:12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;z-index:1001;display:none}
+.heat-legend.show{display:block}
+.heat-legend h4{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--text2);margin-bottom:6px}
+.heat-gradient{width:140px;height:10px;border-radius:5px;margin-bottom:4px}
+.heat-gradient-labels{display:flex;justify-content:space-between;font-size:.6rem;color:var(--text2)}
 /* Network Graph */
 #network-container{display:none;position:relative;width:100%;height:100%;background:var(--bg)}
 #network-container.show{display:block}
@@ -120,6 +132,18 @@ header h1 span{color:var(--gold)}
   <div id="events-list" class="events-upcoming"></div>
 </div>
 <div id="map">
+  <div class="heatmap-controls" id="heatmap-controls">
+    <h4>🔥 Density Heatmap</h4>
+    <label><input type="radio" name="heatmode" value="off" checked> Off</label>
+    <label><input type="radio" name="heatmode" value="count"> Institution Count</label>
+    <label><input type="radio" name="heatmode" value="events"> Event Frequency</label>
+    <label><input type="radio" name="heatmode" value="founded"> Founding Year (older = hotter)</label>
+  </div>
+  <div class="heat-legend" id="heat-legend">
+    <h4 id="heat-legend-title">Density</h4>
+    <div class="heat-gradient" id="heat-gradient"></div>
+    <div class="heat-gradient-labels"><span id="heat-low">Low</span><span id="heat-high">High</span></div>
+  </div>
   <div class="legend">
     <h4>Categories</h4>
     <div id="legend-items"></div>
@@ -132,6 +156,7 @@ header h1 span{color:var(--gold)}
 </div>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
 <script>
 const CATEGORIES = {
   'Performing Arts': { color: '#d4a853', icon: '🎭' },
@@ -353,6 +378,67 @@ document.getElementById('inst-list').addEventListener('click',e=>{
   }
 });
 render();
+
+// ——— HEATMAP LAYER ———
+let heatLayer = null;
+const heatLegend = document.getElementById('heat-legend');
+const heatGradient = document.getElementById('heat-gradient');
+const heatLegendTitle = document.getElementById('heat-legend-title');
+const heatLow = document.getElementById('heat-low');
+const heatHigh = document.getElementById('heat-high');
+
+function getNeighborhoodCentroids() {
+  const hoods = {};
+  INSTITUTIONS.forEach(inst => {
+    if (!hoods[inst.hood]) hoods[inst.hood] = { lats: [], lngs: [], count: 0, events: 0, oldestFounded: Infinity };
+    hoods[inst.hood].lats.push(inst.lat);
+    hoods[inst.hood].lngs.push(inst.lng);
+    hoods[inst.hood].count++;
+    hoods[inst.hood].events += (inst.events || []).length;
+    hoods[inst.hood].oldestFounded = Math.min(hoods[inst.hood].oldestFounded, inst.founded || 2000);
+  });
+  return Object.entries(hoods).map(([name, h]) => ({
+    name,
+    lat: h.lats.reduce((a, b) => a + b) / h.lats.length,
+    lng: h.lngs.reduce((a, b) => a + b) / h.lngs.length,
+    count: h.count, events: h.events, oldestFounded: h.oldestFounded
+  }));
+}
+
+function buildHeatData(mode) {
+  const hoods = getNeighborhoodCentroids();
+  if (mode === 'count') {
+    const max = Math.max(...hoods.map(h => h.count));
+    return hoods.map(h => [h.lat, h.lng, h.count / max]);
+  } else if (mode === 'events') {
+    const max = Math.max(...hoods.map(h => h.events), 1);
+    return hoods.map(h => [h.lat, h.lng, h.events / max]);
+  } else if (mode === 'founded') {
+    const years = hoods.map(h => h.oldestFounded);
+    const minY = Math.min(...years); const maxY = Math.max(...years); const range = maxY - minY || 1;
+    return hoods.map(h => [h.lat, h.lng, 1 - (h.oldestFounded - minY) / range]);
+  }
+  return [];
+}
+
+function updateHeatmap(mode) {
+  if (heatLayer) { map.removeLayer(heatLayer); heatLayer = null; }
+  if (mode === 'off') { heatLegend.classList.remove('show'); return; }
+  const data = buildHeatData(mode);
+  heatLayer = L.heatLayer(data, {
+    radius: 50, blur: 35, maxZoom: 15, max: 1.0,
+    gradient: { 0.0: '#0a0a0f', 0.2: '#1a1a6b', 0.4: '#6b8aff', 0.6: '#8b6bff', 0.8: '#d4a853', 1.0: '#f87171' }
+  }).addTo(map);
+  heatLegend.classList.add('show');
+  heatGradient.style.background = 'linear-gradient(to right, #1a1a6b, #6b8aff, #8b6bff, #d4a853, #f87171)';
+  if (mode === 'count') { heatLegendTitle.textContent = 'Institution Count'; heatLow.textContent = 'Fewer'; heatHigh.textContent = 'More'; }
+  else if (mode === 'events') { heatLegendTitle.textContent = 'Event Frequency'; heatLow.textContent = 'Fewer'; heatHigh.textContent = 'More'; }
+  else if (mode === 'founded') { heatLegendTitle.textContent = 'Founding Year'; heatLow.textContent = 'Newer'; heatHigh.textContent = 'Older'; }
+}
+
+document.querySelectorAll('input[name="heatmode"]').forEach(radio => {
+  radio.addEventListener('change', e => updateHeatmap(e.target.value));
+});
 
 // Live event integration — fetch events.json and merge with static data
 (async function loadLiveEvents(){
