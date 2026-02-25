@@ -6,6 +6,7 @@
 <title>NYC Culture Map — Interactive Guide to New York's Cultural Institutions</title>
 <meta name="description" content="Explore New York City's major cultural institutions, their board connections, upcoming events, and neighborhood cultural density.">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://d3js.org/d3.v7.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -73,6 +74,20 @@ header h1 span{color:var(--gold)}
 .event-item .date{font-size:.65rem;color:var(--accent);text-transform:uppercase;letter-spacing:.06em}
 .event-item .title{font-size:.8rem;font-weight:600;margin:2px 0}
 .event-item .venue{font-size:.7rem;color:var(--text2)}
+/* Network Graph */
+#network-container{display:none;position:relative;width:100%;height:100%;background:var(--bg)}
+#network-container.show{display:block}
+#network-container svg{width:100%;height:100%}
+.view-toggle{display:flex;gap:2px;background:var(--surface2);border-radius:8px;padding:2px;border:1px solid var(--border)}
+.view-toggle button{padding:6px 14px;border:none;border-radius:6px;background:transparent;color:var(--text2);font-size:.75rem;cursor:pointer;transition:all .2s;font-weight:500}
+.view-toggle button.active{background:var(--accent);color:#fff}
+.network-tooltip{position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 16px;pointer-events:none;z-index:2000;box-shadow:0 8px 32px rgba(0,0,0,.6);max-width:280px;opacity:0;transition:opacity .15s}
+.network-tooltip.show{opacity:1}
+.network-tooltip h3{font-size:.9rem;font-weight:600;margin-bottom:2px}
+.network-tooltip .cat{font-size:.65rem;color:var(--gold);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.network-tooltip .conns{font-size:.75rem;color:var(--text2);line-height:1.6}
+.network-tooltip .conns strong{color:var(--accent)}
+.network-help{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:8px 20px;font-size:.7rem;color:var(--text2);z-index:1000;letter-spacing:.02em;pointer-events:none;opacity:.7}
 @media(max-width:900px){
   #app{grid-template-columns:1fr;grid-template-rows:56px 50vh 1fr}
   #sidebar{border-right:none;border-top:1px solid var(--border)}
@@ -84,6 +99,10 @@ header h1 span{color:var(--gold)}
 <header>
   <h1>NYC <span>Culture</span> Map</h1>
   <div class="header-stats">
+    <div class="view-toggle">
+      <button class="active" id="btn-map">🗺️ Map</button>
+      <button id="btn-network">🔗 Network</button>
+    </div>
     <div class="header-stat"><div class="val" id="stat-institutions">0</div><div class="lbl">Institutions</div></div>
     <div class="header-stat"><div class="val" id="stat-events">0</div><div class="lbl">Events</div></div>
     <div class="header-stat"><div class="val" id="stat-connections">0</div><div class="lbl">Board Links</div></div>
@@ -105,6 +124,11 @@ header h1 span{color:var(--gold)}
     <h4>Categories</h4>
     <div id="legend-items"></div>
   </div>
+</div>
+<div id="network-container">
+  <svg id="network-svg"></svg>
+  <div class="network-tooltip" id="network-tooltip"></div>
+  <div class="network-help">Click a node to highlight shared board connections</div>
 </div>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -370,6 +394,212 @@ render();
     }
   } catch(e) { /* fallback to static data silently */ }
 })();
+
+// ——— VIEW TOGGLE ———
+const btnMap = document.getElementById('btn-map');
+const btnNetwork = document.getElementById('btn-network');
+const mapEl = document.getElementById('map');
+const netEl = document.getElementById('network-container');
+let networkInitialized = false;
+
+btnMap.addEventListener('click', () => {
+  btnMap.classList.add('active'); btnNetwork.classList.remove('active');
+  mapEl.style.display = ''; netEl.classList.remove('show');
+  map.invalidateSize();
+});
+btnNetwork.addEventListener('click', () => {
+  btnNetwork.classList.add('active'); btnMap.classList.remove('active');
+  mapEl.style.display = 'none'; netEl.classList.add('show');
+  if (!networkInitialized) { initNetwork(); networkInitialized = true; }
+});
+
+// ——— FORCE-DIRECTED NETWORK GRAPH ———
+function initNetwork() {
+  const container = document.getElementById('network-container');
+  const svg = d3.select('#network-svg');
+  const tooltip = document.getElementById('network-tooltip');
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+  svg.attr('viewBox', `0 0 ${width} ${height}`);
+
+  // Build nodes and links
+  const instNodes = INSTITUTIONS.map((inst, i) => ({
+    id: inst.name, type: 'institution', cat: inst.cat, inst,
+    fx: null, fy: null, index: i
+  }));
+  const boardSet = new Set();
+  INSTITUTIONS.forEach(i => (i.board || []).forEach(b => boardSet.add(b)));
+  // Only include board entities that connect 2+ institutions
+  const boardConnCount = {};
+  boardSet.forEach(b => {
+    boardConnCount[b] = INSTITUTIONS.filter(i => (i.board || []).includes(b)).length;
+  });
+  const boardNodes = [...boardSet].filter(b => boardConnCount[b] >= 2).map(b => ({
+    id: b, type: 'board', connections: boardConnCount[b]
+  }));
+  const allNodes = [...instNodes, ...boardNodes];
+  const nodeMap = new Map(allNodes.map(n => [n.id, n]));
+
+  const links = [];
+  INSTITUTIONS.forEach(inst => {
+    (inst.board || []).forEach(b => {
+      if (nodeMap.has(b)) {
+        links.push({ source: inst.name, target: b, board: b });
+      }
+    });
+  });
+
+  // Simulation
+  const sim = d3.forceSimulation(allNodes)
+    .force('link', d3.forceLink(links).id(d => d.id).distance(d => d.target.type === 'board' ? 100 : 140).strength(0.6))
+    .force('charge', d3.forceManyBody().strength(d => d.type === 'institution' ? -400 : -200))
+    .force('center', d3.forceCenter(width / 2, height / 2))
+    .force('collision', d3.forceCollide(d => d.type === 'institution' ? 40 : 25))
+    .force('x', d3.forceX(width / 2).strength(0.05))
+    .force('y', d3.forceY(height / 2).strength(0.05));
+
+  // Defs for glow
+  const defs = svg.append('defs');
+  const glow = defs.append('filter').attr('id', 'glow');
+  glow.append('feGaussianBlur').attr('stdDeviation', '3').attr('result', 'blur');
+  glow.append('feMerge').selectAll('feMergeNode').data(['blur', 'SourceGraphic']).join('feMergeNode').attr('in', d => d);
+
+  const g = svg.append('g');
+
+  // Zoom
+  svg.call(d3.zoom().scaleExtent([0.3, 4]).on('zoom', e => g.attr('transform', e.transform)));
+
+  // Links
+  const link = g.append('g').selectAll('line').data(links).join('line')
+    .attr('stroke', '#2a2a3a').attr('stroke-width', 1.5).attr('stroke-opacity', 0.5);
+
+  // Board nodes
+  const boardGroup = g.append('g').selectAll('g').data(allNodes.filter(n => n.type === 'board')).join('g')
+    .attr('cursor', 'pointer').call(drag(sim));
+  boardGroup.append('circle')
+    .attr('r', d => 6 + d.connections * 2)
+    .attr('fill', '#d4a85333').attr('stroke', '#d4a853').attr('stroke-width', 1);
+  boardGroup.append('text')
+    .text(d => d.id.length > 20 ? d.id.slice(0, 18) + '…' : d.id)
+    .attr('dy', d => -(10 + d.connections * 2)).attr('text-anchor', 'middle')
+    .attr('fill', '#d4a853').attr('font-size', '9px').attr('opacity', 0.7);
+
+  // Institution nodes
+  const instGroup = g.append('g').selectAll('g').data(allNodes.filter(n => n.type === 'institution')).join('g')
+    .attr('cursor', 'pointer').call(drag(sim));
+  instGroup.append('circle')
+    .attr('r', 18)
+    .attr('fill', d => { const c = CATEGORIES[d.cat]; return c ? c.color + '33' : '#88888833'; })
+    .attr('stroke', d => { const c = CATEGORIES[d.cat]; return c ? c.color : '#888'; })
+    .attr('stroke-width', 2).attr('filter', 'url(#glow)');
+  instGroup.append('text')
+    .text(d => { const c = CATEGORIES[d.cat]; return c ? c.icon : '📍'; })
+    .attr('text-anchor', 'middle').attr('dy', '5px').attr('font-size', '14px');
+  instGroup.append('text')
+    .text(d => d.id.length > 22 ? d.id.slice(0, 20) + '…' : d.id)
+    .attr('dy', 32).attr('text-anchor', 'middle')
+    .attr('fill', '#e8e8f0').attr('font-size', '10px').attr('font-weight', '600');
+
+  // Interaction: click to highlight
+  let selected = null;
+  instGroup.on('click', (e, d) => {
+    e.stopPropagation();
+    if (selected === d.id) { selected = null; resetHighlight(); return; }
+    selected = d.id;
+    highlightNode(d);
+  });
+  boardGroup.on('click', (e, d) => {
+    e.stopPropagation();
+    if (selected === d.id) { selected = null; resetHighlight(); return; }
+    selected = d.id;
+    highlightBoard(d);
+  });
+  svg.on('click', () => { selected = null; resetHighlight(); tooltip.classList.remove('show'); });
+
+  // Tooltip on hover
+  instGroup.on('mouseenter', (e, d) => {
+    const inst = d.inst;
+    const sharedBoards = (inst.board || []).filter(b => nodeMap.has(b));
+    tooltip.innerHTML = `<h3>${inst.name}</h3><div class="cat">${inst.cat} · ${inst.hood}</div><div class="conns"><strong>${sharedBoards.length}</strong> shared board connections:<br>${sharedBoards.map(b => '• ' + b).join('<br>')}</div>`;
+    tooltip.classList.add('show');
+    const rect = container.getBoundingClientRect();
+    tooltip.style.left = (e.clientX - rect.left + 16) + 'px';
+    tooltip.style.top = (e.clientY - rect.top - 10) + 'px';
+  }).on('mouseleave', () => tooltip.classList.remove('show'));
+
+  function highlightNode(d) {
+    const connectedBoards = new Set((d.inst.board || []).filter(b => nodeMap.has(b)));
+    const connectedInsts = new Set();
+    INSTITUTIONS.forEach(inst => {
+      if (inst.name !== d.id && (inst.board || []).some(b => connectedBoards.has(b))) {
+        connectedInsts.add(inst.name);
+      }
+    });
+    const active = new Set([d.id, ...connectedBoards, ...connectedInsts]);
+    instGroup.select('circle').attr('opacity', n => active.has(n.id) ? 1 : 0.1);
+    instGroup.selectAll('text').attr('opacity', n => active.has(n.id) ? 1 : 0.1);
+    boardGroup.select('circle').attr('opacity', n => connectedBoards.has(n.id) ? 1 : 0.1);
+    boardGroup.selectAll('text').attr('opacity', n => connectedBoards.has(n.id) ? 1 : 0.1);
+    link.attr('stroke', l => {
+      const s = typeof l.source === 'object' ? l.source.id : l.source;
+      const t = typeof l.target === 'object' ? l.target.id : l.target;
+      return (s === d.id || t === d.id) ? '#6b8aff' : '#2a2a3a';
+    }).attr('stroke-opacity', l => {
+      const s = typeof l.source === 'object' ? l.source.id : l.source;
+      const t = typeof l.target === 'object' ? l.target.id : l.target;
+      return (s === d.id || t === d.id) ? 0.9 : 0.08;
+    }).attr('stroke-width', l => {
+      const s = typeof l.source === 'object' ? l.source.id : l.source;
+      const t = typeof l.target === 'object' ? l.target.id : l.target;
+      return (s === d.id || t === d.id) ? 2.5 : 1.5;
+    });
+  }
+
+  function highlightBoard(d) {
+    const connectedInsts = new Set();
+    INSTITUTIONS.forEach(inst => {
+      if ((inst.board || []).includes(d.id)) connectedInsts.add(inst.name);
+    });
+    const active = new Set([d.id, ...connectedInsts]);
+    instGroup.select('circle').attr('opacity', n => connectedInsts.has(n.id) ? 1 : 0.1);
+    instGroup.selectAll('text').attr('opacity', n => connectedInsts.has(n.id) ? 1 : 0.1);
+    boardGroup.select('circle').attr('opacity', n => n.id === d.id ? 1 : 0.1);
+    boardGroup.selectAll('text').attr('opacity', n => n.id === d.id ? 1 : 0.1);
+    link.attr('stroke', l => {
+      const t = typeof l.target === 'object' ? l.target.id : l.target;
+      return t === d.id ? '#d4a853' : '#2a2a3a';
+    }).attr('stroke-opacity', l => {
+      const t = typeof l.target === 'object' ? l.target.id : l.target;
+      return t === d.id ? 0.9 : 0.08;
+    }).attr('stroke-width', l => {
+      const t = typeof l.target === 'object' ? l.target.id : l.target;
+      return t === d.id ? 2.5 : 1.5;
+    });
+  }
+
+  function resetHighlight() {
+    instGroup.select('circle').attr('opacity', 1);
+    instGroup.selectAll('text').attr('opacity', 1);
+    boardGroup.select('circle').attr('opacity', 1);
+    boardGroup.selectAll('text').attr('opacity', 1);
+    link.attr('stroke', '#2a2a3a').attr('stroke-opacity', 0.5).attr('stroke-width', 1.5);
+  }
+
+  // Tick
+  sim.on('tick', () => {
+    link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    instGroup.attr('transform', d => `translate(${d.x},${d.y})`);
+    boardGroup.attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+
+  function drag(simulation) {
+    return d3.drag()
+      .on('start', (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
+      .on('end', (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; });
+  }
+}
 </script>
 </body>
 </html>
