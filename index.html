@@ -329,6 +329,47 @@ document.getElementById('inst-list').addEventListener('click',e=>{
   }
 });
 render();
+
+// Live event integration — fetch events.json and merge with static data
+(async function loadLiveEvents(){
+  try {
+    const res = await fetch('events.json');
+    if(!res.ok) return;
+    const data = await res.json();
+    if(!data.events || !data.lastUpdated) return;
+    
+    let updatedCount = 0;
+    INSTITUTIONS.forEach(inst => {
+      const liveEvents = data.events[inst.name];
+      if(liveEvents && liveEvents.length > 0) {
+        // Format live events to match static structure
+        inst.events = liveEvents.map(e => {
+          let dateStr = e.date;
+          if(dateStr && dateStr.includes('T')) {
+            const d = new Date(dateStr);
+            dateStr = d.toLocaleDateString('en-US', {month:'short', day:'numeric'});
+          }
+          return { d: dateStr || 'TBD', t: e.title };
+        }).slice(0, 5);
+        updatedCount++;
+      }
+    });
+    
+    if(updatedCount > 0) {
+      // Re-count events and re-render
+      const newTotal = INSTITUTIONS.reduce((s,i)=>s+(i.events||[]).length,0);
+      document.getElementById('stat-events').textContent = newTotal;
+      render();
+      
+      // Show live data indicator
+      const badge = document.createElement('div');
+      badge.style.cssText = 'position:fixed;bottom:12px;left:12px;background:var(--surface);border:1px solid var(--green);color:var(--green);padding:6px 14px;border-radius:20px;font-size:.7rem;z-index:9999;letter-spacing:.04em;opacity:.85';
+      badge.textContent = `🟢 LIVE DATA · ${updatedCount} venues · Updated ${new Date(data.lastUpdated).toLocaleDateString()}`;
+      document.body.appendChild(badge);
+      setTimeout(()=>{ badge.style.transition='opacity .5s'; badge.style.opacity='0'; setTimeout(()=>badge.remove(),600); }, 8000);
+    }
+  } catch(e) { /* fallback to static data silently */ }
+})();
 </script>
 </body>
 </html>
