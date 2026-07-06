@@ -1,6 +1,18 @@
 {
-  "lastUpdated": "2026-07-06T10:51:30.125Z",
+  "lastUpdated": "2026-07-06T20:06:12.623Z",
   "sources": 12,
-  "totalEvents": 0,
-  "events": {}
+  "totalEvents": 1,
+  "events": {
+    "The Shed": [
+      {
+        "title": "Program - The Shed",
+        "date": "",
+        "location": "",
+        "url": "",
+        "institution": "The Shed",
+        "source": "https://theshed.org/program",
+        "fetchedAt": "2026-07-06T20:06:04.324Z"
+      }
+    ]
+  }
 }
